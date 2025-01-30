@@ -1,4 +1,3 @@
-
 #include <MsTimer2.h>
 //The speed PID control is realized by counting the speed code plate
 #include <BalanceCar.h>
@@ -8,8 +7,6 @@
 #include "MPU6050_6Axis_MotionApps20.h"
 // #include "MPU6050.h"
 #include "Wire.h"
-
-//Нужно добавить комментарии на русском языке
 
 /**********************Instantiate an  object**********************/
 MPU6050         mpu;                                    //Instantiate an MPU6050 object named mpu
@@ -29,8 +26,8 @@ Adeept_Distance Dist;
 // The buzzer controls the pin
 #define BUZZER          11
 // MPU6050 Gyroscope control pin
-#define MPU_SCL         5
-#define MPU_SDA         4
+//#define MPU_SCL         5
+//#define MPU_SDA         4
 // TB6612 Chip control pins
 #define TB6612_STBY     8
 #define TB6612_PWMA     10
@@ -42,20 +39,6 @@ Adeept_Distance Dist;
 // Motor encoder controls pins
 #define MOTOR1          2
 #define MOTOR2          4
-/*************************END**************************/
-
-/***********************Enumeration variable***********************/
-enum COLOR
-{
-    RED = 0,        // red
-    GREEN,          // green
-    BLUE,           // blue
-    YELLOW,         // yellow
-    PURPLE,         // purple
-    CYAN,           // cyan
-    WHITE,          // white
-    ALL_OFF         // off(black)
-};
 /*************************END**************************/
 
 /***********************Variable definitions***********************/
@@ -73,7 +56,6 @@ byte mode3_Button = 0;
 byte mode1_var = 0;
 byte mode2_var = 0;
 byte mode3_var = 0;
-
 
 // Ultrasonic detection of distance variables
 int UT_distance = 0;
@@ -166,25 +148,29 @@ void Timer2Isr()
     }
 }
 
-
+///////////////////////////////////////////////////////////////
 ISR(PCINT2_vect)
 {
     count_right ++;
 }   //Right speed dial count
+
 void Code_left() 
 {
   count_left ++;
 }   //Left speed gauge count
 
+//////////////////////////////////////////////////////////////////////////////////
 void setup()
 {
+    Serial.begin(115200);                                     // Initialize the baud rate of the serial port to 9600
+    Serial.println("Begin...");
     Pin_Config();                                           // Module pin configuration
     Pin_Init();                                             // Module pin initialization
     Dist.begin(ECHO, TRIG);                                 // Add the ultrasonic module
-    Wire.begin();                                           // Join the I2C bus sequence
-    Serial.begin(9600);                                     // Initialize the baud rate of the serial port to 9600
+    Wire.begin();                                           // Join the I2C bus sequence    
     mpu.initialize();                                       // Initialize the MPU6050
     delay(1500);                                            // Wait for the system to stabilize
+    Serial.println("Config...");
     balancecar.pwm1 = 0;
     balancecar.pwm2 = 0;
     //5ms timed interrupt Settings use timer2  
@@ -192,31 +178,52 @@ void setup()
     MsTimer2::start();
 }
 
+////////////////////////////////////////////////////////////////////////////////
 void loop()
 {
     attachInterrupt(0, Code_left, CHANGE);                  // Enable external interrupt 0               
     attachPinChangeInterrupt(MOTOR2);                       // Pin D4 is interrupted externally
     TX_Information(UT_distance);                            // Send ultrasonic data
     RX_Information();                                       // Receive Bluetooth data
+//    Serial.print("Dist = ");
+//    Serial.println(UT_distance);
 
-    if(mode1_var == 1)
+    if(N_Button > 0)                                            // Rotate counterclockwise
     {
-        mode1();
+        spinr = 1;
     }
-    else if(mode2_var == 1)
+    else if(S_Button > 0)                                       // Rotate clockwise
     {
-        mode2();
+        spinl = 1;
     }
-    else if(mode3_var == 1) 
+    else if(x_axis >= -30 && x_axis <= 30 && y_axis > 30)       // Forward motion
     {
-        mode3();
+        ResetCarState();
+        back = -30;
+    }
+    else if (x_axis >= -30 && x_axis <= 30 && y_axis < -30)     // Move backward
+    {
+        ResetCarState();
+        front = 30;
+    }
+    else if (y_axis >= -30 && y_axis <= 30 && x_axis < -30)     // right
+    {
+        turnr = 1;
+    }
+    else if (y_axis >= -30 && y_axis <= 30 && x_axis > 30)      // left
+    {
+        turnl = 1;
+    }
+    else                                                        // stop
+    {
+        ResetCarState();
     }
 }
-
+////////////////////////////////////////////////////////////////////////////////
 
 void angleout()
 {
-    balancecar.angleoutput = kp * (kalmanfilter.angle + angle0) + kd * kalmanfilter.Gyro_x;//PD Angle loop control
+    balancecar.angleoutput = kp * (kalmanfilter.angle + angle0) + kd * kalmanfilter.Gyro_x; //PD Angle loop control
 }
 
 void countpluse()
@@ -267,107 +274,6 @@ Function Function: Control the car direction and speed through Bluetooth
 Function parameters: None
 The function returns: none
 *********************************************************/
-void mode1()
-{
-    RGB(GREEN);
-    if(klaxon > 0)                                              // speaker switch
-    {
-        digitalWrite(BUZZER, HIGH);
-    }
-    else
-    {
-        digitalWrite(BUZZER, LOW);   
-    }
-
-    if(N_Button > 0)                                            // Rotate counterclockwise
-    {
-        spinr = 1;
-    }
-    else if(S_Button > 0)                                       // Rotate clockwise
-    {
-        spinl = 1;
-    }
-    else if(x_axis >= -30 && x_axis <= 30 && y_axis > 30)       // Forward motion
-    {
-        ResetCarState();
-        back = -30;
-    }
-    else if (x_axis >= -30 && x_axis <= 30 && y_axis < -30)     // Move backward
-    {
-        ResetCarState();
-        front = 30;
-    }
-    else if (y_axis >= -30 && y_axis <= 30 && x_axis < -30)     // right
-    {
-        turnr = 1;
-    }
-    else if (y_axis >= -30 && y_axis <= 30 && x_axis > 30)      // left
-    {
-        turnl = 1;
-    }
-    else                                                        // stop
-    {
-        RGB(RED);
-        ResetCarState();
-    }
-}
-
-/*********************************************************
-Mode2 ()
-Function Function: Obstacle avoidance mode
-Function parameters: None
-The function returns: none
-*********************************************************/
-void mode2()
-{
-    if(UT_distance < 8)
-    {
-        ResetCarState();
-        front = 15;
-        RGB(RED);
-    }
-    else if(UT_distance < 15)
-    {
-        RGB(BLUE);
-        turnr = 1;
-        delay(200);
-    }
-    else
-    {
-        RGB(GREEN);
-        ResetCarState();
-        back = -15;
-    }  
-}
-
-/*********************************************************
-Mode3 ()
-Function Function: follow mode
-Function parameters: None
-The function returns: none
-*********************************************************/
-void mode3()
-{
-    if(UT_distance >= 20 && UT_distance < 35)
-    {
-        ResetCarState();
-        back = -15;
-        RGB(GREEN);
-    }
-    else if(UT_distance < 20)
-    {
-        ResetCarState();
-        front = 15;
-        RGB(BLUE);
-    }
-    else
-    {
-        RGB(RED);
-        ResetCarState();
-    }  
-}
-
-
 
 void ResetCarState()
 {
@@ -388,59 +294,58 @@ The function returns: none
 *********************************************************/
 void RX_Information(void)
 {
-    if(Serial.available() > 0)
+  if (Serial.available() > 0)
+  {
+    char cmd = Serial.read();
+    Serial.print((char)cmd); // debug
+
+    if (cmd == '0')
     {
-        delay(1);                                           // delay 1 ms
-        if(Serial.readBytes(RX_package, 11))
-        {
-            if (RX_package[0] == 0xA5 && RX_package[10] == 0x5A)     // 只验证了包头与包尾，暂未验证检验码
-            {
-                Serialcount = 0;
-                x_axis = RX_package[1];                     // The X-axis value
-                y_axis = RX_package[2];                     // The Y-axis value
-                klaxon = RX_package[3];                     // the horn
-                N_Button = RX_package[4];                   // Rotate counterclockwise
-                S_Button = RX_package[5];                   // Rotate clockwise
-                // mode1_Button = RX_package[6];
-                // mode2_Button = RX_package[7];
-                // mode3_Button = RX_package[8];
-                if(RX_package[6] > 0)
-                {
-                    ResetCarState();
-                    RGB(GREEN);
-                    mode1_var = 1;
-                    mode2_var = 0;
-                    mode3_var = 0;
-                }
-                else if(RX_package[7] > 0)
-                {
-                    ResetCarState();
-                    RGB(BLUE);
-                    mode1_var = 0;
-                    mode2_var = 1;
-                    mode3_var = 0;
-                }
-                else if (RX_package[8] > 0)
-                {
-                    ResetCarState();
-                    RGB(PURPLE);
-                    mode1_var = 0;
-                    mode2_var = 0;
-                    mode3_var = 1;
-                }
-                
-            }
-            else
-            {
-                Serialcount++;
-                return;
-            }
-        }
+      Serial.println(" Start");
+      ResetCarState();
+      back = -30;
     }
-    else
+    else if (cmd == 'X')
     {
-        Serialcount++;
-        if(Serialcount > 300)
+      Serial.println(" Stop");
+      ResetCarState();
+    }
+    else if (cmd == 'F')
+    {
+      Serial.println(" Вперёд");
+      ResetCarState();
+      back = -30;
+    }  
+    else if (cmd == 'B')
+    {
+      Serial.println(" Назад");
+      ResetCarState();
+      back = -30;
+    }
+    else if (cmd == 'L')
+    {
+      Serial.println(" Налево");
+      turnl = 1;
+    }
+    else if (cmd == 'R')
+    {
+      Serial.println(" Направо");
+      turnr = 1;
+    }
+    else if (cmd == 'W')
+    {
+      Serial.println(" Квадрат");
+      spinr = 1;
+    }
+    else if (cmd == 'Z')
+    {
+      Serial.println(" Ручное управление");
+      spinl = 1;
+    }
+  }
+
+/* Serialcount++;
+  if(Serialcount > 300)
         {
             klaxon = 0;
             x_axis = 0;
@@ -448,7 +353,7 @@ void RX_Information(void)
             N_Button = 0;
             S_Button = 0;
         }
-    }
+*/
 }
 
 /*********************************************************
@@ -459,10 +364,8 @@ The function returns: none
 *********************************************************/
 void TX_Information(byte dat)
 {
-    if(dat>127) dat = 127;
-    TX_package[1] = dat;
-    TX_package[2] = TX_package[1];                          // Check the sum                             
-    Serial.write(TX_package, 4);                            // Send the packet
+//    Serial.print("Distance = ");
+//    Serial.println(dat);
 }
 
 /*********************************************************
@@ -527,57 +430,4 @@ void Pin_Config()
     
     pinMode(MOTOR1, INPUT);                                 // Code motor 1 control pin configuration input
     pinMode(MOTOR2, INPUT);                                 // Code motor 2 control pin configuration input
-}
-
-/*********************************************************
-Function name: RGB()
-Function function: control RGB output various colors
-Function parameters: color, various color reference enumeration@color
-The function returns: none
-*********************************************************/
-void RGB(enum COLOR color)
-{   
-    switch (color)
-    {
-    case RED:
-        digitalWrite(RLED, LOW);
-        digitalWrite(GLED, HIGH);
-        digitalWrite(BLED, HIGH);
-        break;
-    case GREEN:
-        digitalWrite(RLED, HIGH);
-        digitalWrite(GLED, LOW);
-        digitalWrite(BLED, HIGH);
-        break;
-    case BLUE:
-        digitalWrite(RLED, HIGH);
-        digitalWrite(GLED, HIGH);
-        digitalWrite(BLED, LOW);
-        break;
-    case YELLOW:
-        digitalWrite(RLED, LOW);
-        digitalWrite(GLED, LOW);
-        digitalWrite(BLED, HIGH);
-        break;
-    case PURPLE:
-        digitalWrite(RLED, LOW);
-        digitalWrite(GLED, HIGH);
-        digitalWrite(BLED, LOW);
-        break;
-    case CYAN:
-        digitalWrite(RLED, HIGH);
-        digitalWrite(GLED, LOW);
-        digitalWrite(BLED, LOW);
-        break;
-    case WHITE:
-        digitalWrite(RLED, LOW);
-        digitalWrite(GLED, LOW);
-        digitalWrite(BLED, LOW);
-        break;
-    default:
-        digitalWrite(RLED, HIGH);
-        digitalWrite(GLED, HIGH);
-        digitalWrite(BLED, HIGH);
-        break;
-    }
 }
