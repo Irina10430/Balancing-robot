@@ -364,8 +364,8 @@ The function returns: none
 *********************************************************/
 void TX_Information(byte dat)
 {
-//    Serial.print("Distance = ");
-//    Serial.println(dat);
+    Serial.print("Distance = ");
+    Serial.println(dat);
 }
 
 /*********************************************************
