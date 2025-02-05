@@ -1,433 +1,315 @@
 #include <MsTimer2.h>
-//The speed PID control is realized by counting the speed code plate
 #include <BalanceCar.h>
 #include <KalmanFilter.h>
 #include "Adeept_Distance.h"
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
-// #include "MPU6050.h"
 #include "Wire.h"
 
-/**********************Instantiate an  object**********************/
-MPU6050         mpu;                                    //Instantiate an MPU6050 object named mpu
-BalanceCar      balancecar;
-KalmanFilter    kalmanfilter;
-Adeept_Distance Dist;
-/*************************END**************************/
+MPU6050                 mpu; //Работа с гироскопом и акселерометром
+BalanceCar              balancecar; //Управление двигателей
+KalmanFilter            kalmanfilter; //Фильтр Калмана для углов гироскопа
+Adeept_Distance         Dist; //Измерение расстояния до препятствия
 
-/***********************Pin definition***********************/
-// The ultrasonic module controls the pins
-#define TRIG            3
-#define ECHO            5
-// RGB Color lamp control pin
-#define RLED            A0
-#define GLED            A1
-#define BLED            A2
-// The buzzer controls the pin
-#define BUZZER          11
-// MPU6050 Gyroscope control pin
-//#define MPU_SCL         5
-//#define MPU_SDA         4
-// TB6612 Chip control pins
-#define TB6612_STBY     8
-#define TB6612_PWMA     10
-#define TB6612_PWMB     9
-#define TB6612_AIN1     12
-#define TB6612_AIN2     13
-#define TB6612_BIN1     7
-#define TB6612_BIN2     6
-// Motor encoder controls pins
-#define MOTOR1          2
-#define MOTOR2          4
-/*************************END**************************/
+//Определение функции на ножках платы////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#define TRIG            3 //Посылка сигнала
+#define ECHO            5 //Прием сигнала
+#define RLED            A0 //Красный светодиод
+#define GLED            A1 //Зеленый светодиод
+#define BLED            A2 //Синий светодиод
+#define BUZZER          11 //Звук
+#define TB6612_STBY     8 //Остановка двигателей
+#define TB6612_PWMA     10 //Скорость левого двигателя
+#define TB6612_PWMB     9 //Скорость правого двигателя
+#define TB6612_AIN1     12 //Энкодер левого +
+#define TB6612_AIN2     13 //Энкодер левого -
+#define TB6612_BIN1     7 //Энкодер правого +
+#define TB6612_BIN2     6 //Энкодер правого -
+#define MOTOR1          2 //Питание левого экодера
+#define MOTOR2          4 //Питание правого энкодера
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/***********************Variable definitions***********************/
-byte TX_package[4] = {0xA5, 0, 0, 0x5A};                    // Packet header(0xA5) + original data (n*byte) + inspection(1byte) + Package the tail(0x5A)
-byte RX_package[11] = {0};
-int Serialcount = 0;
-char x_axis = 0;                                            // Store variables along the X-axis
-char y_axis = 0;                                            // Store variables on the Y axis
-byte klaxon = 0;                                            // The default storage rate is1 ~ 255
-byte S_Button = 0;                                          // Store a clockwise rotation variable
-byte N_Button = 0;                                          // Store counterclockwise rotation variables
-byte mode1_Button = 0;
-byte mode2_Button = 0;
-byte mode3_Button = 0;
-byte mode1_var = 0;
-byte mode2_var = 0;
-byte mode3_var = 0;
+//Определение переменных///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+char x_axis = 0;          //Пройденный путь колеса по энкодеру (ось х)
+char y_axis = 0;          //Пройденный путь колеса по энкодеру (ось у)
+byte klaxon = 0;          //Включение звука                           
 
-// Ultrasonic detection of distance variables
-int UT_distance = 0;
-int detTime = 0; 
+int UT_distance = 0;      //Дистанция в см
+int detTime = 0;          //Время в мс
 
-// Pulse calculation
-int lz = 0;
-int rz = 0;
-int rpluse = 0;
-int lpluse = 0;
-int sumam;
+int lz = 0;               //Разница счетчика левого колеса
+int rz = 0;               //Разница счетчика правого колеса
+int lpluse = 0;           //Счетчик импульсов энкодера левого колеса
+int rpluse = 0;           //Счетчик импульсов энкодера правого колеса
+int sumam;                //Средний пройденный путь двумя колесами (в импульсах энкодера)
 
-// Kalman_Filte
-float Q_angle = 0.001, Q_gyro = 0.005;                      // Angular data confidence, angular velocity data confidence
-float R_angle = 0.5 , C_0 = 1;
-float timeChange = 5;                                       // Filter sampling interval in milliseconds
-float dt = timeChange * 0.001;                              // Note: Dt is the filter sampling time
+//Фильтр Калмана
+float Q_angle = 0.001, Q_gyro = 0.005;   //Коэффициенты накопления вертикального угла акселерометра и гироскопа
+float R_angle = 0.5 , C_0 = 1;           //Коэффициент накопления угла поворота
+float timeChange = 5;                    //Интервал времеи между измерениями в мс
+float dt = timeChange * 0.001;           //Интервал времеи между измерениями в с
 
-// Angle data
+//Определение угла ориентации
 float Q;
-float Angle_ax;                                             // The Angle of tilt calculated by acceleration
-float Angle_ay;
-float K1 = 0.05;                                            // The weight of the accelerometer
-float angle0 = -0.17;                                       // Angle of mechanical balance
-int slong;
+float Angle_ax;                          //Текущий накопленный угол наклона по направлению движения вдоль оси х
+float Angle_ay;                          //Текущий накопленный угол наклона поперек направления движения вдоль оси у
+float K1 = 0.05;                         //Весовой множитель акселерометра
+float angle0 = -0.17;                    //Порог отключения двигателей по наклону в рад
 
-//          p:20      i:0.0     d:0.58
-double kp = 23, ki = 0.0, kd = 0.48;                        // Parameters that you need to modify
-//          p:5.5            i:0.1098           d:0.0
-double kp_speed = 5.52, ki_speed = 0.1098, kd_speed = 0.0;  // Parameters that you need to modify
-//          p:10            i:0          d:0.1
-double kp_turn = 10, ki_turn = 0, kd_turn = 0.09;           // Rotary PID setting
+double kp = 23, ki = 0.0, kd = 0.48;                        //Параметры ПИД регулятора по углу наклона
+double kp_speed = 5.52, ki_speed = 0.1098, kd_speed = 0.0;  //Параметры ПИД регулятора по скорости движения
+double kp_turn = 10, ki_turn = 0, kd_turn = 0.09;           //Параметры ПИД регулятора по углу поворота
 
-int16_t ax, ay, az, gx, gy, gz;
+int16_t ax, ay, az, gx, gy, gz;     //Ускорения и угловые скорости по осям, вычисленные из MPU
 
-int front = 0;                                              // Forward variables
-int back = 0;                                               // Back variables
-int turnl = 0;                                              // Turn left sign
-int turnr = 0;                                              // Turn right
-int spinl = 0;                                              // Rotate the left flag
-int spinr = 0;                                              // Rotate the flag right
+int front = 0;                      //Команда "вперед"
+int back = 0;                       //Команда "назад"
+int turnl = 0;                      //Команда "налево"
+int turnr = 0;                      //Команда "направо"
+int spinl = 0;                      //Команда "вокруг оси против часовой стрелки"
+int spinr = 0;                      //Команда "вокруг оси по часовой стрелке"
 
-// Steering PID parameters
-double setp0 = 0, dpwm = 0, dl = 0;                         // Angle balance, PWM poor, dead zone,PWM1,PWM2
+double setp0 = 0, dpwm = 0, dl = 0; //Внутренние переменные ПИД регулятора
 
-// Turn and rotate parameters
-int turncount = 0;                                          // Calculate the steering intervention time
-float turnoutput = 0;
+double Setpoint;                    //Счетчик по энкодеру для возврата в точку старта
+double Setpoints, Outputs = 0;      //Счетчик пройденного пути
 
-double Setpoint;                                            // Angle DIP set point, input, output
-double Setpoints, Outputs = 0;                              // speed DIP set point, input, output
+int speedcc = 0;                    //Делитель частоты вызова прерываний для движения прямо
+volatile long count_left = 0;       //Счетчик импульсов левого колеса
+volatile long count_right = 0;      //Счетчик импульсов правого колеса
 
-int speedcc = 0;
-volatile long count_right = 0;                              // The volatile LON type is used to ensure that the external interrupt pulse meter values are valid when used in other functions
-volatile long count_left = 0;
-/*************************END**************************/
+int turncount = 0;                  //Делитель частоты вызова прерываний для поворота
+float turnoutput = 0;               //Счетчик поворота в градусах
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/*********************************************************
-Function name: Pin_Init()
-Function Initialize pin high/low level
-Function parameters: None
-The function returns: none
-*********************************************************/
+//Функция, вызываемая по таймеру каждые 5 мс/////////////////////////////////////////////////////////////////////////////////////////////////////////
 void Timer2Isr()
 {
-    sei();                                                  // Enable global variables
-    countpluse();                                           // Pulse superposition subfunction
-    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);           // IIC obtains MPU6050 six-axis data ax ay az gx gy gz
-    kalmanfilter.Angletest(ax, ay, az, gx, gy, gz, dt, Q_angle, Q_gyro, R_angle, C_0, K1);                                   //Get Angle and Kaman filter
-    angleout();                                             // Angle loop PD control
-    speedcc++;
-    if (speedcc >= 8)                                       // 40 ms into the speed loop control
-    {
-        Outputs = balancecar.speedpiout(kp_speed, ki_speed, kd_speed, front, back, setp0);
-        speedcc = 0;
-    }
-    turncount++;
-    if (turncount > 4)                                      // 40 ms into the rotation control
-    {
-        turnoutput = balancecar.turnspin(turnl, turnr, spinl, spinr, kp_turn, kd_turn, kalmanfilter.Gyro_z);                              //Rotate the subfunction
-        turncount = 0;
-    }
-    balancecar.posture++;
-    balancecar.pwma(Outputs, turnoutput, kalmanfilter.angle, kalmanfilter.angle6, turnl, turnr, spinl, spinr, front, back, kalmanfilter.accelz, TB6612_AIN1, TB6612_AIN2, TB6612_BIN1, TB6612_BIN2, TB6612_PWMA, TB6612_PWMB);                            //小车总PWM输出
-    detTime++;
-    if(detTime >= 4)                                        // 40 ms an ultrasound measurement
-    {
-        detTime = 0;
-        UT_distance = Dist.getDistanceCentimeter();
-    }
+  sei();                                                  //Разрешение прерываний
+  countpluse();                                           //Вызов функции расчета по энкодерам
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);           //Вычитывание углов ускорения из MPU
+  kalmanfilter.Angletest(ax, ay, az, gx, gy, gz, dt, Q_angle, Q_gyro, R_angle, C_0, K1);  //Расчет ориентации фильтром Калмана
+  balancecar.angleoutput = kp * (kalmanfilter.angle + angle0) + kd * kalmanfilter.Gyro_x; //Фильтрация комплементарным фильтром
+  speedcc++;                                              //Увеличение значения делителя частоты прерываний
+  if (speedcc >= 8)                                       //Каждые 40 мс (по документации)
+  {
+    Outputs = balancecar.speedpiout(kp_speed, ki_speed, kd_speed, front, back, setp0); //Управление двигателями для движения прямо
+    speedcc = 0;
+  }
+  turncount++;
+  if (turncount > 4) //Каждые 20 мс
+  {
+    turnoutput = balancecar.turnspin(turnl, turnr, spinl, spinr, kp_turn, kd_turn, kalmanfilter.Gyro_z); //Управление двигателями для поворота 
+    turncount = 0;
+  }
+  balancecar.posture++; //Счетчик времени в интервалах по 5 мс
+  balancecar.pwma(Outputs, turnoutput, kalmanfilter.angle, kalmanfilter.angle6, turnl, turnr, spinl, spinr, front, back, kalmanfilter.accelz, TB6612_AIN1, TB6612_AIN2, TB6612_BIN1, TB6612_BIN2, TB6612_PWMA, TB6612_PWMB); //Физическое управление двигателями
+  detTime++; //Счетчик делителя измерения расстояния
+  if(detTime >= 4) //Каждые 20 мс
+  {
+    detTime = 0;
+    UT_distance = Dist.getDistanceCentimeter();
+  }
 }
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-///////////////////////////////////////////////////////////////
-ISR(PCINT2_vect)
-{
-    count_right ++;
-}   //Right speed dial count
-
+//Обработчики прерываний////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void Code_left() 
 {
-  count_left ++;
-}   //Left speed gauge count
+  count_left ++; //Для левого колеса
+}
 
-//////////////////////////////////////////////////////////////////////////////////
+ISR(PCINT2_vect)
+{
+  count_right ++; //Для правого колеса
+}   
+
+void attachPinChangeInterrupt(int pin)
+{
+  pinMode(pin, INPUT_PULLUP); //Для MPU
+  cli();
+  PCMSK2 |= bit(PCINT20);
+  PCIFR |= bit(PCIF2);
+  PCICR |= bit(PCIE2); 
+  sei();
+}
+
+//Инициализация программы///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void setup()
 {
-    Serial.begin(115200);                                     // Initialize the baud rate of the serial port to 9600
-    Serial.println("Begin...");
-    Pin_Config();                                           // Module pin configuration
-    Pin_Init();                                             // Module pin initialization
-    Dist.begin(ECHO, TRIG);                                 // Add the ultrasonic module
-    Wire.begin();                                           // Join the I2C bus sequence    
-    mpu.initialize();                                       // Initialize the MPU6050
-    delay(1500);                                            // Wait for the system to stabilize
-    Serial.println("Config...");
-    balancecar.pwm1 = 0;
-    balancecar.pwm2 = 0;
-    //5ms timed interrupt Settings use timer2  
-    MsTimer2::set(5, Timer2Isr);
-    MsTimer2::start();
+  Serial.begin(115200);                  //Битовая скорость последовательного интерфейса (!!снять BT перед прошивкой платы!!)     
+  Pin_Config();                          //Инициализация ножек микросхемы
+  Pin_Init();                            //Запись начальных значений
+  Dist.begin(ECHO, TRIG);                //Инициализация модуля измерения расстояния
+  Wire.begin();                          //Инициализация I2C    
+  mpu.initialize();                      //Инициализация MPU
+  delay(1500);                           //Ожидание калибровки MPU
+  balancecar.pwm1 = 0;                   //Начальное значения ШИМ на левом двигателе
+  balancecar.pwm2 = 0;                   //Начальное значения ШИМ на правом двигателе
+    
+  MsTimer2::set(5, Timer2Isr);           //Настройка таймера 5 мс
+  MsTimer2::start();
 }
 
-////////////////////////////////////////////////////////////////////////////////
+//Основной цикл программы//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void loop()
 {
-    attachInterrupt(0, Code_left, CHANGE);                  // Enable external interrupt 0               
-    attachPinChangeInterrupt(MOTOR2);                       // Pin D4 is interrupted externally
-    TX_Information(UT_distance);                            // Send ultrasonic data
-    RX_Information();                                       // Receive Bluetooth data
-//    Serial.print("Dist = ");
-//    Serial.println(UT_distance);
-
-    if(N_Button > 0)                                            // Rotate counterclockwise
-    {
-        spinr = 1;
-    }
-    else if(S_Button > 0)                                       // Rotate clockwise
-    {
-        spinl = 1;
-    }
-    else if(x_axis >= -30 && x_axis <= 30 && y_axis > 30)       // Forward motion
-    {
-        ResetCarState();
-        back = -30;
-    }
-    else if (x_axis >= -30 && x_axis <= 30 && y_axis < -30)     // Move backward
-    {
-        ResetCarState();
-        front = 30;
-    }
-    else if (y_axis >= -30 && y_axis <= 30 && x_axis < -30)     // right
-    {
-        turnr = 1;
-    }
-    else if (y_axis >= -30 && y_axis <= 30 && x_axis > 30)      // left
-    {
-        turnl = 1;
-    }
-    else                                                        // stop
-    {
-        ResetCarState();
-    }
+  attachInterrupt(0, Code_left, CHANGE); //Включение обработчика прерываний левого колеса         
+  attachPinChangeInterrupt(MOTOR2);      //Включение обработчика прерываний правого колеса
+  TX_Information(UT_distance);           //Вывод отладочной информации
+  RX_Information();                      //Чтение команд
 }
-////////////////////////////////////////////////////////////////////////////////
-
-void angleout()
-{
-    balancecar.angleoutput = kp * (kalmanfilter.angle + angle0) + kd * kalmanfilter.Gyro_x; //PD Angle loop control
-}
-
+//Функция счетчика импульсов энкодера с учетом направления движения/////////////////////////////////////////////////////////////////////////////// 
 void countpluse()
 {
-    lz = count_left;
-    rz = count_right;
+  lz = count_left; 
+  rz = count_right;
 
-    count_left = 0;
-    count_right = 0;
+  count_left = 0;
+  count_right = 0;
 
-    lpluse = lz;
-    rpluse = rz;
+  lpluse = lz;
+  rpluse = rz;
 
-    if ((balancecar.pwm1 < 0) && (balancecar.pwm2 < 0))                     //When the moving direction of the trolley is judged to be backward (PWM motor voltage is negative), the pulse number is negative
-    {
-        rpluse = -rpluse;
-        lpluse = -lpluse;
-    }
-    else if ((balancecar.pwm1 > 0) && (balancecar.pwm2 > 0))                //The number of pulses is negative when the moving direction of the trolley is judged to be forward (I.E. the voltage of the PWM motor is positive)
-    {
-        rpluse = rpluse;
-        lpluse = lpluse;
-    }
-    else if ((balancecar.pwm1 < 0) && (balancecar.pwm2 > 0))                //The number of pulses is negative when the moving direction of the trolley is judged to be forward (I.E. the voltage of the PWM motor is positive)
-    {
-        rpluse = rpluse;
-        lpluse = -lpluse;
-    }
-    else if ((balancecar.pwm1 > 0) && (balancecar.pwm2 < 0))                //The number of left rotation and right pulse is negative and the number of left pulse is positive
-    {
-        rpluse = -rpluse;
-        lpluse = lpluse;
-    }
+  if ((balancecar.pwm1 > 0) && (balancecar.pwm2 > 0))       //Движение вперед
+  {
+    rpluse = rpluse;
+    lpluse = lpluse;
+  }
+  else if ((balancecar.pwm1 < 0) && (balancecar.pwm2 < 0))  //Движение назад
+  {
+    rpluse = -rpluse;
+    lpluse = -lpluse;
+  }
+  else if ((balancecar.pwm1 < 0) && (balancecar.pwm2 > 0))  //Поворот налево
+  {
+    rpluse = rpluse;
+    lpluse = -lpluse;
+  }
+  else if ((balancecar.pwm1 > 0) && (balancecar.pwm2 < 0))  //Поворот направо
+  {
+    rpluse = -rpluse;
+    lpluse = lpluse;
+  }
 
-    // Bring up the judgment
-    balancecar.stopr += rpluse;
-    balancecar.stopl += lpluse;
-
-    // Every 5ms when the interrupt enters, the pulse number is superimposed
-    balancecar.pulseright += rpluse;
-    balancecar.pulseleft += lpluse;
-    sumam = (balancecar.pulseright + balancecar.pulseleft) * 4;
+  balancecar.stopl += lpluse;        //Сохранение значение энкодера для движения прямо левым колесом
+  balancecar.stopr += rpluse;        //Сохранение значение энкодера для движения прямо правым колесом
+  balancecar.pulseleft += lpluse;    //Сохранение значение энкодера для поворота левым колесом
+  balancecar.pulseright += rpluse;   //Сохранение значение энкодера для поворота правым колесом
+  sumam = (balancecar.pulseright + balancecar.pulseleft) * 4; //Пройденный путь двумя колесами
 }
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/*********************************************************
-Function name: mode1()
-Function Function: Control the car direction and speed through Bluetooth
-Function parameters: None
-The function returns: none
-*********************************************************/
-
+//Команда остановки робота//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void ResetCarState()
 {
-    turnl = 0; 
-    turnr = 0;  
-    front = 0; 
-    back = 0; 
-    spinl = 0; 
-    spinr = 0; 
-    turnoutput = 0;
+  turnl = 0; 
+  turnr = 0;  
+  front = 0; 
+  back = 0; 
+  spinl = 0; 
+  spinr = 0; 
+  turnoutput = 0;
 }
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/*********************************************************
-Function name: RX_Information()
-Function Function: Receives data packets through Bluetooth
-Function parameters: None
-The function returns: none
-*********************************************************/
+//Обработка команд////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void RX_Information(void)
 {
   if (Serial.available() > 0)
   {
     char cmd = Serial.read();
-    Serial.print((char)cmd); // debug
 
     if (cmd == '0')
     {
-      Serial.println(" Start");
+      Serial.println("Start");
       ResetCarState();
       back = -30;
     }
     else if (cmd == 'X')
     {
-      Serial.println(" Stop");
+      Serial.println("Stop");
       ResetCarState();
     }
     else if (cmd == 'F')
     {
-      Serial.println(" Вперёд");
+      Serial.println("Вперёд");
       ResetCarState();
       back = -30;
     }  
     else if (cmd == 'B')
     {
-      Serial.println(" Назад");
+      Serial.println("Назад");
       ResetCarState();
       back = -30;
     }
     else if (cmd == 'L')
     {
-      Serial.println(" Налево");
+      Serial.println("Налево");
       turnl = 1;
     }
     else if (cmd == 'R')
     {
-      Serial.println(" Направо");
+      Serial.println("Направо");
       turnr = 1;
     }
     else if (cmd == 'W')
     {
-      Serial.println(" Квадрат");
+      Serial.println("Квадрат");
       spinr = 1;
     }
     else if (cmd == 'Z')
     {
-      Serial.println(" Ручное управление");
+      Serial.println("Ручное управление");
       spinl = 1;
     }
   }
-
-/* Serialcount++;
-  if(Serialcount > 300)
-        {
-            klaxon = 0;
-            x_axis = 0;
-            y_axis = 0;
-            N_Button = 0;
-            S_Button = 0;
-        }
-*/
 }
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/*********************************************************
-Function name: TX_Information()
-Function Function: Sends data packets through Bluetooth
-Function argument: dat, the data to be sent
-The function returns: none
-*********************************************************/
+//Вывод отладочных данных/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void TX_Information(byte dat)
 {
-//    Serial.print("Distance = ");
-//    Serial.println(dat);
+  Serial.print("Distance = "); //Вывод расстояния до препятствия
+  Serial.println(dat);
 }
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/*********************************************************
-Function name: Pin_Init()
-Function Initialize pin high/low level
-Function parameters: None
-The function returns: none
-*********************************************************/
+//Инициализация ножек микросхемы/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void Pin_Init()
 {   
-    digitalWrite(BUZZER, LOW);                              // The buzzer controls the pin output low level
-    
-    digitalWrite(TB6612_STBY, HIGH);                        // TB6612 enable control pin output high level
-    digitalWrite(TB6612_PWMA, LOW);                         // TB6612 PWMA control pin output low level
-    digitalWrite(TB6612_PWMB, LOW);                         // 
-    digitalWrite(TB6612_AIN1, LOW);                         // 
-    digitalWrite(TB6612_AIN2, HIGH);                        // 
-    digitalWrite(TB6612_BIN1, HIGH);                        // 
-    digitalWrite(TB6612_BIN2, LOW);                         //
+  digitalWrite(BUZZER, LOW);
+  digitalWrite(TB6612_STBY, HIGH);                        
+  digitalWrite(TB6612_PWMA, LOW);                         
+  digitalWrite(TB6612_PWMB, LOW);                          
+  digitalWrite(TB6612_AIN1, LOW);                          
+  digitalWrite(TB6612_AIN2, HIGH);                         
+  digitalWrite(TB6612_BIN1, HIGH);                         
+  digitalWrite(TB6612_BIN2, LOW);                         
 }
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/*********************************************************
-Function name: attachPinChangeInterrupt()
-The D4 pin is set as an external interrupt
-Function parameters: pin, 4
-The function returns: none
-*********************************************************/
-void attachPinChangeInterrupt(int pin)
-{
-    pinMode(pin, INPUT_PULLUP);
-    cli();
-    PCMSK2 |= bit(PCINT20);
-    PCIFR |= bit(PCIF2);
-    PCICR |= bit(PCIE2); 
-    sei();
-}
-
-/*********************************************************
-Function name: Pin_Config()
-The pin I/O function configures pin I/O mode
-Function parameters: None
-The function returns: none
-*********************************************************/
+//Настройка параметров ножек микросхемы//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void Pin_Config()
 {
-    pinMode(TRIG, OUTPUT);                                  // Ultrasonic Trig control pin configuration output
-    pinMode(ECHO, INPUT);                                   // Ultrasonic Echo control pin configuration input
+  pinMode(TRIG, OUTPUT);                                  
+  pinMode(ECHO, INPUT);                                   
 
-    pinMode(RLED, OUTPUT);                                  // RGB color lights red control pin configuration output
-    pinMode(GLED, OUTPUT);                                  // RGB color light green control pin configuration output
-    pinMode(BLED, OUTPUT);                                  // RGB color light blue control pin configuration output
-    
-    pinMode(BUZZER, OUTPUT);                                // Buzzer control pin configuration output
-    
-    pinMode(TB6612_STBY, OUTPUT);                           // TB6612 Enable control pin configuration output
-    pinMode(TB6612_PWMA, OUTPUT);                           // TB6612 PWMA control pin configuration output
-    pinMode(TB6612_PWMB, OUTPUT);                           // TB6612 PWMB controls pin configuration output
-    pinMode(TB6612_AIN1, OUTPUT);                           // 
-    pinMode(TB6612_AIN2, OUTPUT);                           // 
-    pinMode(TB6612_BIN1, OUTPUT);                           // 
-    pinMode(TB6612_BIN2, OUTPUT);                           // 
-    
-    pinMode(MOTOR1, INPUT);                                 // Code motor 1 control pin configuration input
-    pinMode(MOTOR2, INPUT);                                 // Code motor 2 control pin configuration input
+  pinMode(RLED, OUTPUT);                                  
+  pinMode(GLED, OUTPUT);                                  
+  pinMode(BLED, OUTPUT);                                  
+  
+  pinMode(BUZZER, OUTPUT);                                
+  
+  pinMode(TB6612_STBY, OUTPUT);                           
+  pinMode(TB6612_PWMA, OUTPUT);                           
+  pinMode(TB6612_PWMB, OUTPUT);                           
+  pinMode(TB6612_AIN1, OUTPUT);                            
+  pinMode(TB6612_AIN2, OUTPUT);                            
+  pinMode(TB6612_BIN1, OUTPUT);                            
+  pinMode(TB6612_BIN2, OUTPUT);                            
+  
+  pinMode(MOTOR1, INPUT);                                 
+  pinMode(MOTOR2, INPUT);                                 
 }
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
